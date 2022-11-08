@@ -1,5 +1,6 @@
 from Crypto.Cipher import AES
 import sys
+from utils import bcolors
 
 # https://www.cs.ucdavis.edu/~rogaway/ocb/ocb-faq.htm#what-is-ocb
 class AES_OCB:
@@ -101,8 +102,9 @@ class AES_OCB:
             i += 1
         return auth
 
-
     def encrypt(self, message: bytearray, associated_data: bytearray) -> bytes:
+        print(f'{bcolors.BOLD}{bcolors.FAIL}ENCRYPTING{bcolors.ENDC}')
+        print(f'{bcolors.FAIL}Checksum{bcolors.ENDC}')
         ciphertext_all = b''
         auth = self.calculate_auth(associated_data)
         checksum = None
@@ -113,11 +115,13 @@ class AES_OCB:
         for data_block in AES_OCB.split_block(message, AES_OCB.BLOCK_SIZE):
             delta = delta ^ AES_OCB.calculate_l(ldollar, i)
             data_block_int = int.from_bytes(data_block, sys.byteorder)
+
             # calculate checksum
             if i == 1:
-                checksum = data_block_int
+                checksum = int.from_bytes(AES_OCB.pad(data_block), sys.byteorder)
             else:
-                checksum ^= data_block_int
+                checksum ^= int.from_bytes(AES_OCB.pad(data_block), sys.byteorder)
+
             if len(data_block) == AES_OCB.BLOCK_SIZE:
                 ek = self.aes.encrypt((data_block_int ^ delta).to_bytes(16, sys.byteorder))
                 ciphertext = (int.from_bytes(ek, sys.byteorder) ^ delta).to_bytes(16, sys.byteorder)
@@ -126,11 +130,10 @@ class AES_OCB:
                 padded_data_block = AES_OCB.pad(data_block)
                 padded_data_block_int = int.from_bytes(padded_data_block, sys.byteorder)
 
-                # calculate checksum
-                checksum ^= padded_data_block_int
-                ek = delta.to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder)
+                ek = self.aes.encrypt(delta.to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder))
                 ciphertext = (int.from_bytes(ek, sys.byteorder) ^ padded_data_block_int).to_bytes(16, sys.byteorder)
-            ciphertext_all += ciphertext
+            ciphertext_all += ciphertext[:len(data_block)]
+            print(checksum, bytes(data_block), int.from_bytes(AES_OCB.pad(data_block), sys.byteorder))
             i += 1
         # calculate tag
         delta = delta ^ AES_OCB.calculate_l(ldollar, i)
@@ -139,3 +142,50 @@ class AES_OCB:
 
         tag_bytes = tag.to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder)[:self.tag_size]
         return ciphertext_all + tag_bytes
+
+    def decrypt(self, ciphertext: bytearray | bytes, associated_data: bytearray) -> (bytes, bool):
+        print(f'{bcolors.BOLD}{bcolors.OKBLUE}DECRYPTING{bcolors.ENDC}')
+        print(f'{bcolors.OKBLUE}Checksum{bcolors.ENDC}')
+        message_all = b''
+        tag = ciphertext[-self.tag_size:]
+        ciphertext = ciphertext[:-self.tag_size]
+        delta = self.calculate_init()
+        lstar = self.aes.encrypt(b'\x00' * 16)
+        ldollar = AES_OCB.double(int.from_bytes(lstar, sys.byteorder))
+        checksum = None
+        i = 1
+        for data_block in AES_OCB.split_block(ciphertext, AES_OCB.BLOCK_SIZE):
+            delta = delta ^ AES_OCB.calculate_l(ldollar, i)
+            data_block_int = int.from_bytes(data_block, sys.byteorder)
+            if len(data_block) == AES_OCB.BLOCK_SIZE:
+                ek = (data_block_int ^ delta).to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder)
+                m_xor_delta = int.from_bytes(self.aes.decrypt(ek), sys.byteorder)
+                m = (m_xor_delta ^ delta).to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder)
+            else:
+                ek = self.aes.encrypt(delta.to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder))
+                m = (data_block_int ^ int.from_bytes(ek, sys.byteorder)).to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder)
+                m = m[:len(data_block)]
+            message_all += m
+
+            # calculate checksum
+            if i == 1:
+                checksum = int.from_bytes(AES_OCB.pad(m), sys.byteorder)
+            else:
+                checksum ^= int.from_bytes(AES_OCB.pad(m), sys.byteorder)
+            print(checksum, m, int.from_bytes(AES_OCB.pad(m), sys.byteorder))
+            i += 1
+
+        delta = delta ^ AES_OCB.calculate_l(ldollar, i)
+        checksum_ek = self.aes.encrypt((checksum ^ delta).to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder))
+        auth = self.calculate_auth(associated_data)
+        calculated_tag = (int.from_bytes(checksum_ek, sys.byteorder) ^ auth).to_bytes(AES_OCB.BLOCK_SIZE, sys.byteorder)
+        print('tag', int.from_bytes(tag, sys.byteorder))
+        print('calculated_tag', int.from_bytes(calculated_tag[:self.tag_size], sys.byteorder))
+        validity = tag == calculated_tag[:self.tag_size]
+        return message_all, validity
+
+
+
+
+
+

@@ -31,5 +31,5 @@ def milionaires_problem(bogus_money:int,apolonia_money = 0)->bool:
 
     #Bogus sprawdza czy liczba na pozycji odpowiadajacej ilosci pieniedzy bogusia
     #jest wzglednie pierwsza z x mod p 
-    Bogus_is_wealthier = gcd(Wj[Bogus.cash_amount-1],x%p) ==1
-    return Bogus_is_wealthier
+    apolonia_is_wealthier = Wj[Bogus.cash_amount-1]==x%p
+    return apolonia_is_wealthier
